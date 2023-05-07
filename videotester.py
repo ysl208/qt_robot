@@ -1,98 +1,86 @@
-import tensorflow as tf
-import os
+import time
 import cv2
 import numpy as np
-from keras.preprocessing import image
+import pyttsx3
+from collections import Counter
 import warnings
 warnings.filterwarnings("ignore")
-from tensorflow.keras.utils import load_img
+
+from keras.preprocessing import image
 from keras.models import  load_model
-import matplotlib.pyplot as plt
-import numpy as np
-import pyttsx3
-import time
+import tensorflow as tf
 
-# load model
-model = load_model("models/best_model.h5")
-shape = 224
+shape_ = (224, 244)
+model_ = load_model("models/best_model.h5")
 
-#model = load_model("models/EmotionDetectionModel.h5")
-#shape = 48
-
-N = 5
-history = []
-emotions_dict = {
+# Define emotions to skip and other parameters
+emotions_dict_ = {
     'happy': "Glad you're happy! Do you want to tell me about your day?",
     'sad': "You look a bit sad. Do you want to tell me what happened?",
     'surprise': "Tell me why you look so surprised!",
     'angry': "You look a bit angry. Just take a breath....then tell me what is upsetting you.",
     'neutral': "What would you like to talk about today?",
-# unused:
-   'fear': "Are you anxious about anything? Don't worry, you'll be fine.",
-   'disgust': "Did you see anything that you find disgusting?",
+    # unused:
+    'fear': "Are you anxious about anything? Don't worry, you'll be fine.",
+    'disgust': "Did you see anything that you find disgusting?",
 }
+emotions_to_skip_ = () #('disgust', 'fear')
 
-face_haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+def get_predicted_emotion(gray_img, test_img, x, y, w, h):
+    emotions = ('angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral')
+    cv2.rectangle(test_img, (x, y), (x + w, y + h), (255, 0, 0), thickness=7)
+    roi_gray = gray_img[y:y + w, x:x + h]  # cropping region of interest i.e. face area from  image
+    roi_gray = cv2.resize(roi_gray, (224, 224))
+    img_pixels = tf.keras.utils.img_to_array(roi_gray)
+    img_pixels = np.expand_dims(img_pixels, axis=0)
+    img_pixels /= 255
+    predictions = model_.predict(img_pixels)
 
-cap = cv2.VideoCapture(0)
-engine = pyttsx3.init()
-engine.setProperty("rate", 150)
-#engine.setProperty("pitch", 120)
-#voices = engine.getProperty('voices')
-#engine.setProperty('voice', )
+    # find max indexed array
+    max_index = np.argmax(predictions[0])
+    predicted_emotion = emotions[max_index]
+    if predicted_emotion in emotions_to_skip_:
+        return None
+    return predicted_emotion
 
-last_emotion = ''
-fear_counter = 0
-fear_rate = 2
+def speak(engine, phrase):
+    engine.say(phrase)
+    engine.runAndWait()
 
-emotions_to_skip = () #('disgust', 'fear')
-counter = 0
+def get_most_frequent_emotion(history, N):
+    most_common_emotion = Counter(history[-N:]).most_common(1)[0]
+    return most_common_emotion[0]
 
-engine.say("Hi, how are you today?")
-engine.runAndWait()
+def detect_emotion():
+    # Detect emotions in a video stream
+    face_haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    cap = cv2.VideoCapture(0)
+    engine = pyttsx3.init()
+    engine.setProperty("rate", 150)
+    highest_score = 0
+    counter = 0
 
-while True:
-    ret, test_img = cap.read()  # captures frame and returns boolean value and captured image
-    if not ret:
-        continue
-    gray_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
+    while True:
+        ret, test_img = cap.read()  # captures frame and returns boolean value and captured image
+        if not ret:
+            continue
+        gray_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
 
-    faces_detected = face_haar_cascade.detectMultiScale(gray_img, 1.32, 5)
+        faces_detected = face_haar_cascade.detectMultiScale(gray_img, 1.32, 5)
 
-    for (x, y, w, h) in faces_detected:
-        cv2.rectangle(test_img, (x, y), (x + w, y + h), (255, 0, 0), thickness=7)
-        roi_gray = gray_img[y:y + w, x:x + h]  # cropping region of interest i.e. face area from  image
-        roi_gray = cv2.resize(roi_gray, (shape, shape))
-        img_pixels = tf.keras.utils.img_to_array(roi_gray)
-        img_pixels = np.expand_dims(img_pixels, axis=0)
-        img_pixels /= 255
+        for (x, y, w, h) in faces_detected:
+            predicted_emotion = get_predicted_emotion(gray_img, test_img, x, y, w, h)
+            cv2.putText(test_img, predicted_emotion, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            # speak(engine, emotions_dict_[predicted_emotion])
 
-        predictions = model.predict(img_pixels)
+        resized_img = cv2.resize(test_img, (1000, 700))
+        cv2.imshow('Facial emotion analysis ', resized_img)
 
-        # find max indexed array
-        max_index = np.argmax(predictions[0])
-
-        emotions = ('angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral')
-        predicted_emotion = emotions[max_index]
-        if predicted_emotion in emotions_to_skip:
-           continue
-        # if predicted_emotion == 'fear':
-        #    fear_counter += 1
-        #    if fear_counter % fear_rate == 0:
-        #       continue
-        if predicted_emotion == last_emotion:
+        if cv2.waitKey(10) == ord('q'):  # wait until 'q' key is pressed
             break
-        last_emotion = predicted_emotion
-        print(predicted_emotion)
-        cv2.putText(test_img, predicted_emotion, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        engine.say(emotions_dict[predicted_emotion])
-        engine.runAndWait()
 
-    resized_img = cv2.resize(test_img, (1000, 700))
-    cv2.imshow('Facial emotion analysis ', resized_img)
+    cap.release()
+    cv2.destroyAllWindows()
 
-    if cv2.waitKey(10) == ord('q'):  # wait until 'q' key is pressed
-        break
-
-cap.release()
-cv2.destroyAllWindows
+if __name__ == "__main__":
+    detect_emotion()
