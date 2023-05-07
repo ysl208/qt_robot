@@ -12,6 +12,7 @@ import tensorflow as tf
 
 shape_ = (224, 244)
 model_ = load_model("models/best_model.h5")
+acceptance_rate_ = 0.9
 
 # Define emotions to skip and other parameters
 emotions_dict_ = {
@@ -35,11 +36,10 @@ def get_predicted_emotion(gray_img, test_img, x, y, w, h):
     img_pixels = np.expand_dims(img_pixels, axis=0)
     img_pixels /= 255
     predictions = model_.predict(img_pixels)
-
     # find max indexed array
     max_index = np.argmax(predictions[0])
     predicted_emotion = emotions[max_index]
-    if predicted_emotion in emotions_to_skip_:
+    if (predicted_emotion in emotions_to_skip_) or (predictions[0][max_index] < acceptance_rate_):
         return None
     return predicted_emotion
 
@@ -48,8 +48,13 @@ def speak(engine, phrase):
     engine.runAndWait()
 
 def get_most_frequent_emotion(history, N):
-    most_common_emotion = Counter(history[-N:]).most_common(1)[0]
-    return most_common_emotion[0]
+    weights = [i for i in range(1, N + 1)][::-1] # weights from 10 to 1
+    weighted_history = []
+    for i, emotion in enumerate(history[-N:]):
+        weighted_history.extend([emotion] * weights[i])
+    (emotion, occ) = Counter(weighted_history).most_common(1)[0]
+    # print('Most common emotion is %s that occurred %d times.' % (emotion, occ))
+    return emotion if (occ > N/2) else ''
 
 def detect_emotion():
     # Detect emotions in a video stream
@@ -59,7 +64,7 @@ def detect_emotion():
     engine.setProperty("rate", 150)
     highest_score = 0
     counter = 0
-
+    history = []
     while True:
         ret, test_img = cap.read()  # captures frame and returns boolean value and captured image
         if not ret:
@@ -70,8 +75,11 @@ def detect_emotion():
 
         for (x, y, w, h) in faces_detected:
             predicted_emotion = get_predicted_emotion(gray_img, test_img, x, y, w, h)
-            cv2.putText(test_img, predicted_emotion, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            # speak(engine, emotions_dict_[predicted_emotion])
+            history.append(predicted_emotion)
+            top_emotion = get_most_frequent_emotion(history, 10)
+            if len(top_emotion) > 0:
+                cv2.putText(test_img, top_emotion, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                # speak(engine, emotions_dict_[predicted_emotion])
 
         resized_img = cv2.resize(test_img, (1000, 700))
         cv2.imshow('Facial emotion analysis ', resized_img)
