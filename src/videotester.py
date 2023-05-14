@@ -9,6 +9,9 @@ warnings.filterwarnings("ignore")
 from keras.preprocessing import image
 from keras.models import  load_model
 import tensorflow as tf
+import rospy
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
 
 shape_ = (224, 244)
 model_ = load_model("models/best_model.h5")
@@ -56,6 +59,26 @@ def get_most_frequent_emotion(history, N):
     # print('Most common emotion is %s that occurred %d times.' % (emotion, occ))
     return emotion if (occ > N/2) else ''
 
+def image_callback(msg):
+    cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+    gray_img = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+
+    faces_detected = face_haar_cascade.detectMultiScale(gray_img, 1.32, 5)
+
+    for (x, y, w, h) in faces_detected:
+        predicted_emotion = get_predicted_emotion(gray_img, cv_image, x, y, w, h)
+        history.append(predicted_emotion)
+        top_emotion = get_most_frequent_emotion(history, 10)
+        if len(top_emotion) > 0:
+            cv2.putText(cv_image, top_emotion, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            # speak(engine, emotions_dict_[predicted_emotion])
+
+    resized_img = cv2.resize(cv_image, (1000, 700))
+    cv2.imshow('Facial emotion analysis ', resized_img)
+
+    if cv2.waitKey(10) == ord('q'):  # wait until 'q' key is pressed
+        cv2.destroyAllWindows()
+
 def detect_emotion():
     # Detect emotions in a video stream
     face_haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -91,4 +114,18 @@ def detect_emotion():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+    # Initialize ROS node
+    rospy.init_node('emotion_detection_node')
+
+# Create a CvBridge object
+    bridge = CvBridge()
+
+# Load face cascade classifier
+    face_haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+# Set up the video capture from the ROS topic
+    image_subscriber = rospy.Subscriber('/camera/color/image_raw', Image, image_callback)
+
+# Start the main ROS loop
+    rospy.spin()
     detect_emotion()
